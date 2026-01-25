@@ -9,7 +9,7 @@ import torch
 # Add the parent directory to the system path for importing modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from modelling.functional import TransformerDecoderLayer
+from transformer_project.modelling.functional import TransformerDecoderLayer
 
 # Define test data for hidden states and attention masks
 ENCODER = torch.tensor(

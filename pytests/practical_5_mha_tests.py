@@ -7,7 +7,7 @@ import torch
 # Add the parent directory to the system path for importing modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from modelling.attention import MultiHeadAttention
+from transformer_project.modelling.attention import MultiHeadAttention
 
 # Define test data for hidden states and attention masks
 VALUE = torch.tensor([
