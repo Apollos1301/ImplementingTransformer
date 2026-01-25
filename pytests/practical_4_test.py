@@ -7,7 +7,7 @@ import torch
 # Add the parent directory to the system path for importing modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from modelling.positional_encoding import PositionalEncoding
+from transformer_project.modelling.positional_encoding import PositionalEncoding
 
 # Define test data
 EMBEDDING_DIM = 16
