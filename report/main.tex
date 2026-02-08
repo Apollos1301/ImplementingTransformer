@@ -52,7 +52,7 @@ Building on this baseline, we will investigate the memory bandwidth bottleneck d
     \item Empirical evaluation of the baseline model on the WMT17 German-English translation task, including training dynamics and quantitative results.
     \item Implementation and analysis of Grouped Query Attention (GQA) as an architectural extension, with an analysis of its effect on memory footprint, latency, and translation performance.
 \end{itemize}
-All code used for the implementation, training, and evaluation of the models is publicly available at \url{https://git.hhu.de/jat82ruv/implementingtransformers}.
+All code used for the implementation, training, and evaluation of the models is publicly available at \url{https://github.com/Apollos1301/ImplementingTransformer}.
 
 %-------------------------------------------------------------------------
 \section{Transformer Architecture and Model Design}
@@ -247,7 +247,7 @@ To complement the quantitative evaluation, we qualitatively analyze translations
 \toprule
 \textbf{Source (German)} & \textbf{MHA Output} & \textbf{GQA Output} \\
 \midrule
-\multicolumn{3}{l}{\textit{Short sentences (both models perform well):}} \\
+\multicolumn{3}{l}{\textbf{Short sentences (both models perform well):}} \\
 \midrule
 Es war eine Geste, die eine Krise beendete. & It was a gesture that ended a crisis. & It was a gesture that ended a crisis. \\
 \midrule
@@ -255,7 +255,7 @@ Vergessen Sie den Druck. & Forget the pressure. & Forget the pressure. \\
 \midrule
 Das ist kein Zufall. & That is no coincidence. & That is no accident. \\
 \midrule
-\multicolumn{3}{l}{\textit{Medium complexity (GQA shows better semantic handling):}} \\
+\multicolumn{3}{l}{\textbf{Medium complexity (GQA shows better semantic handling):}} \\
 \midrule
 28-jähriger Koch in San Francisco Mall tot aufgefunden & 28 years of cook in San Francisco Mall dead & 28-year-old chef found dead in San Francisco Mall \\
 \midrule
@@ -263,16 +263,16 @@ Es ist so eine Ehre für uns mit ihr zu arbeiten. & It is such an honour for us 
 \midrule
 Die Lenkung dürfte aber etwas direkter sein. & But the control should be a little more direct. & But the steering should be a little more direct. \\
 \midrule
-\multicolumn{3}{l}{\textit{Complex sentences (relative clauses and long-range dependencies):}} \\
+\multicolumn{3}{l}{\textbf{Complex sentences (relative clauses and long-range dependencies):}} \\
 \midrule
 Ein 28-jähriger Koch, der vor kurzem nach San Francisco gezogen ist... & A 28 year-old kitchen recently drawn to San Francisco... & A 28-year-old chef, who recently moved to San Francisco... \\
 \midrule
-\multicolumn{3}{l}{\textit{Failure cases (repetition artifacts on very long sequences):}} \\
+\multicolumn{3}{l}{\textbf{Failure cases (repetition artifacts on very long sequences):}} \\
 \midrule
 Einheimische betrauerten es als letzten Verlust in einer sich gentrifizierenden Stadt. & In the early days... the city was the first to be a city to be a city to be a city... & Locals mourned it as the last loss in a gentrifying city. \\
 \bottomrule
 \end{tabular}
-\caption{Qualitative comparison of translations across different sentence types. GQA consistently produces more fluent output and better handles semantic ambiguity, compound nouns (``Koch'' $\rightarrow$ ``chef'' vs ``cook''), and relative clause structures. Reference: ``Locals bemoaned it as the latest loss in a gentrifying city.''}
+\caption{Qualitative comparison of translations across different sentence types.}
 \label{tab:examples}
 \end{table*}
 
