@@ -1,50 +1,54 @@
 import torch
 from torch.utils.data import Dataset
-from typing import Optional
-
 
 class TranslationDataset(Dataset):
-    def __init__(self, data: list[dict], tokenizer, src_key: str = 'de', tgt_key: str = 'en',
-                 max_len: int = 64):
-        self.data = data
+    def __init__(self, dataset, tokenizer, max_seq_length=50):
+        self.dataset = dataset
         self.tokenizer = tokenizer
-        self.src_key = src_key
-        self.tgt_key = tgt_key
-        self.max_len = max_len
-        self.pad_id = tokenizer.pad_token_id
-    
-    def __len__(self) -> int:
-        return len(self.data)
-    
-    def __getitem__(self, idx: int) -> dict:
-        item = self.data[idx]
+        self.max_seq_length = max_seq_length
         
-        src_ids = self.tokenizer.encode(item[self.src_key])
-        tgt_ids = self.tokenizer.encode(item[self.tgt_key])
+        assert self.tokenizer.pad_token_id is not None, "Tokenizer must have pad_token set"
+        assert self.tokenizer.bos_token_id is not None, "Tokenizer must have bos_token set"
+        assert self.tokenizer.eos_token_id is not None, "Tokenizer must have eos_token set"
         
-        src_ids = self._pad_or_truncate(src_ids)
-        tgt_ids = self._pad_or_truncate(tgt_ids)
+        self.pad_token_id = self.tokenizer.pad_token_id
+        self.bos_token_id = self.tokenizer.bos_token_id
+        self.eos_token_id = self.tokenizer.eos_token_id
+            
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        src_text, tgt_text = self.dataset[idx]
+
+        src_ids = self.tokenizer.encode(src_text, add_special_tokens=False)
+        src_ids = src_ids[:self.max_seq_length - 2]
+        src_ids = [self.bos_token_id] + src_ids + [self.eos_token_id]
         
-        src_mask = [1 if id != self.pad_id else 0 for id in src_ids]
-        tgt_mask = [1 if id != self.pad_id else 0 for id in tgt_ids]
+        n_pad_src = self.max_seq_length - len(src_ids)
+        src_ids = src_ids + [self.pad_token_id] * n_pad_src
+        
+        tgt_ids_raw = self.tokenizer.encode(tgt_text, add_special_tokens=False)
+        tgt_ids_raw = tgt_ids_raw[:self.max_seq_length - 1]
+        
+        decoder_input_ids = [self.bos_token_id] + tgt_ids_raw
+        n_pad_dec = self.max_seq_length - len(decoder_input_ids)
+        decoder_input_ids = decoder_input_ids + [self.pad_token_id] * n_pad_dec
+        
+        label_ids = tgt_ids_raw + [self.eos_token_id]
+        label_ids = label_ids + [self.pad_token_id] * n_pad_dec
+        
+        encoder_input = torch.tensor(src_ids, dtype=torch.long)
+        decoder_input = torch.tensor(decoder_input_ids, dtype=torch.long)
+        label = torch.tensor(label_ids, dtype=torch.long)
+        
+        src_mask = (encoder_input != self.pad_token_id).unsqueeze(0).unsqueeze(0)
+        tgt_mask = (decoder_input != self.pad_token_id).unsqueeze(0).unsqueeze(0)
         
         return {
-            'src_ids': torch.tensor(src_ids, dtype=torch.long),
-            'tgt_ids': torch.tensor(tgt_ids, dtype=torch.long),
-            'src_mask': torch.tensor(src_mask, dtype=torch.long),
-            'tgt_mask': torch.tensor(tgt_mask, dtype=torch.long)
+            "encoder_input": encoder_input,
+            "decoder_input": decoder_input,
+            "label": label,
+            "src_mask": src_mask,
+            "tgt_mask": tgt_mask
         }
-    
-    def _pad_or_truncate(self, ids: list[int]) -> list[int]:
-        if len(ids) > self.max_len:
-            return ids[:self.max_len]
-        return ids + [self.pad_id] * (self.max_len - len(ids))
-
-
-def collate_fn(batch: list[dict]) -> dict:
-    return {
-        'src_ids': torch.stack([item['src_ids'] for item in batch]),
-        'tgt_ids': torch.stack([item['tgt_ids'] for item in batch]),
-        'src_mask': torch.stack([item['src_mask'] for item in batch]),
-        'tgt_mask': torch.stack([item['tgt_mask'] for item in batch])
-    }

@@ -1,0 +1,48 @@
+# Environment variables (contains API keys)
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+
+# Virtual environments
+venv/
+env/
+.venv/
+transformer_env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Model checkpoints
+weights*/
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+*.h5
+*.hdf5
+*.pb
+*.bin
+*.safetensors
+*.onnx
+*.pkl
+*.pickle
+
+# Cache
+cache_huggingface/
+tokenizer_data/
+tokenizer_cache/
+.pytest_cache/
+
+# Logs
+wandb/
+*.log

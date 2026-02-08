@@ -1,130 +1,125 @@
 import torch
 import torch.nn as nn
-import math
-from .attention import MultiHeadAttention
-from .functional import BaseTransformerLayer, TransformerDecoderLayer, PositionWiseFeedForward
+
+from .embedding import Embeddings
 from .positional_encoding import PositionalEncoding
-
-
-class TransformerEncoder(nn.Module):
-    def __init__(self, num_layers: int, d_model: int, num_heads: int, 
-                 dim_feedforward: int, dropout: float = 0.1):
-        super().__init__()
-        self.layers = nn.ModuleList([
-            BaseTransformerLayer(
-                input_dim=d_model,
-                num_heads=num_heads,
-                feature_dim=dim_feedforward,
-                dropout=dropout,
-                mask_future=False
-            )
-            for _ in range(num_layers)
-        ])
-    
-    def forward(self, x: torch.Tensor, mask: torch.Tensor = None) -> torch.Tensor:
-        for layer in self.layers:
-            x = layer(x, mask)
-        return x
-
-
-class TransformerDecoder(nn.Module):
-    def __init__(self, num_layers: int, d_model: int, num_heads: int,
-                 dim_feedforward: int, dropout: float = 0.1):
-        super().__init__()
-        self.layers = nn.ModuleList([
-            TransformerDecoderLayer(
-                input_dim=d_model,
-                num_heads=num_heads,
-                feature_dim=dim_feedforward,
-                dropout=dropout
-            )
-            for _ in range(num_layers)
-        ])
-    
-    def forward(self, x: torch.Tensor, encoder_output: torch.Tensor,
-                src_mask: torch.Tensor = None, tgt_mask: torch.Tensor = None) -> torch.Tensor:
-        for layer in self.layers:
-            x = layer(x, encoder_output, src_mask, tgt_mask)
-        return x
-
+from .functional import BaseTransformerLayer, TransformerDecoderLayer
 
 class Transformer(nn.Module):
-    def __init__(self, vocab_size: int, d_model: int = 512, n_heads: int = 8,
-                 num_encoder_layers: int = 6, num_decoder_layers: int = 6,
-                 dim_feedforward: int = 2048, dropout: float = 0.1,
-                 max_len: int = 5000, pad_idx: int = 0, share_embeddings: bool = True):
+    def __init__(
+        self, 
+        vocab_size: int, 
+        d_model: int, 
+        n_heads: int, 
+        num_encoder_layers: int, 
+        num_decoder_layers: int, 
+        dim_feedforward: int, 
+        dropout: float = 0.1, 
+        max_len: int = 5000,
+        positional_encoding_type: str = "sinusoidal",  # "sinusoidal" or "rope"
+        use_gqa: bool = False,
+        num_kv_heads: int = None  # Number of KV heads for GQA (defaults to n_heads if None)
+    ):
         super().__init__()
         
+        self.positional_encoding_type = positional_encoding_type
+        self.use_gqa = use_gqa
+        self.num_kv_heads = num_kv_heads if num_kv_heads is not None else n_heads
+        self.n_heads = n_heads
         self.d_model = d_model
-        self.pad_idx = pad_idx
         
-        self.embedding = nn.Embedding(vocab_size, d_model, padding_idx=pad_idx)
-        self.positional_encoding = PositionalEncoding(d_model, max_len)
-        self.dropout = nn.Dropout(dropout)
+        use_rope = (positional_encoding_type == "rope")
+
+        self.embedding = Embeddings(d_model, vocab_size)
         
-        self.encoder = TransformerEncoder(
-            num_layers=num_encoder_layers,
-            d_model=d_model,
-            num_heads=n_heads,
-            dim_feedforward=dim_feedforward,
-            dropout=dropout
-        )
+        if use_rope:
+            self.pos_encoding = nn.Dropout(dropout)
+        else:
+            self.pos_encoding = PositionalEncoding(d_model, max_len, dropout)
         
-        self.decoder = TransformerDecoder(
-            num_layers=num_decoder_layers,
-            d_model=d_model,
-            num_heads=n_heads,
-            dim_feedforward=dim_feedforward,
-            dropout=dropout
-        )
+        self.encoder_layers = nn.ModuleList([
+            BaseTransformerLayer(
+                input_dim=d_model, 
+                num_heads=n_heads, 
+                feature_dim=dim_feedforward, 
+                dropout=dropout,
+                use_rope=use_rope,
+                max_len=max_len,
+                use_gqa=use_gqa,
+                num_kv_heads=self.num_kv_heads
+            )
+            for _ in range(num_encoder_layers)
+        ])
         
-        self.output_projection = nn.Linear(d_model, vocab_size, bias=False)
+        self.decoder_layers = nn.ModuleList([
+            TransformerDecoderLayer(
+                input_dim=d_model, 
+                num_heads=n_heads, 
+                feature_dim=dim_feedforward, 
+                dropout=dropout,
+                use_rope=use_rope,
+                max_len=max_len,
+                use_gqa=use_gqa,
+                num_kv_heads=self.num_kv_heads
+            )
+            for _ in range(num_decoder_layers)
+        ])
         
-        if share_embeddings:
-            self.output_projection.weight = self.embedding.weight
+        self.projection = nn.Linear(d_model, vocab_size, bias=False)
         
-        self._init_parameters()
+        self.projection.weight = self.embedding.lut.weight
     
-    def _init_parameters(self):
-        for p in self.parameters():
-            if p.dim() > 1:
-                nn.init.xavier_uniform_(p)
+    def get_attention_type(self) -> str:
+        if self.use_gqa:
+            return f"GQA (Q={self.n_heads}, KV={self.num_kv_heads})"
+        else:
+            return f"MHA (heads={self.n_heads})"
     
-    def encode(self, src: torch.Tensor, src_mask: torch.Tensor = None) -> torch.Tensor:
-        src_emb = self.embedding(src) * math.sqrt(self.d_model)
-        src_emb = self.positional_encoding(src_emb)
-        src_emb = self.dropout(src_emb)
-        return self.encoder(src_emb, src_mask)
-    
-    def decode(self, tgt: torch.Tensor, encoder_output: torch.Tensor,
-               src_mask: torch.Tensor = None, tgt_mask: torch.Tensor = None) -> torch.Tensor:
-        tgt_emb = self.embedding(tgt) * math.sqrt(self.d_model)
-        tgt_emb = self.positional_encoding(tgt_emb)
-        tgt_emb = self.dropout(tgt_emb)
-        return self.decoder(tgt_emb, encoder_output, src_mask, tgt_mask)
-    
-    def forward(self, src: torch.Tensor, tgt: torch.Tensor,
-                src_mask: torch.Tensor = None, tgt_mask: torch.Tensor = None) -> torch.Tensor:
-        encoder_output = self.encode(src, src_mask)
-        decoder_output = self.decode(tgt, encoder_output, src_mask, tgt_mask)
-        logits = self.output_projection(decoder_output)
+    def get_kv_cache_info(self, batch_size: int, seq_len: int) -> dict:
+        d_k = self.d_model // self.n_heads
+        
+        mha_kv_cache_per_layer = 2 * batch_size * self.n_heads * seq_len * d_k
+        
+        gqa_kv_cache_per_layer = 2 * batch_size * self.num_kv_heads * seq_len * d_k
+        
+        num_encoder = len(self.encoder_layers)
+        num_decoder = len(self.decoder_layers)
+        
+        actual_cache = gqa_kv_cache_per_layer * (num_encoder + 2 * num_decoder)
+        mha_equivalent = mha_kv_cache_per_layer * (num_encoder + 2 * num_decoder)
+        
+        return {
+            "actual_kv_cache_elements": actual_cache,
+            "mha_equivalent_elements": mha_equivalent,
+            "memory_reduction_ratio": actual_cache / mha_equivalent if mha_equivalent > 0 else 1.0,
+            "memory_savings_percent": (1 - actual_cache / mha_equivalent) * 100 if mha_equivalent > 0 else 0.0
+        }
+
+    def encode(self, src, src_mask=None):
+        x = self.embedding(src)
+        x = self.pos_encoding(x)
+        
+        for layer in self.encoder_layers:
+            x = layer(x, src_mask)
+        return x
+
+    def decode(self, tgt, encoder_output, src_mask=None, tgt_mask=None):
+        x = self.embedding(tgt)
+        x = self.pos_encoding(x)
+        
+        for layer in self.decoder_layers:
+            x = layer(x, encoder_output, encoder_mask=src_mask, attention_mask=tgt_mask)
+        return x
+
+    def forward(self, src, tgt, src_mask=None, tgt_mask=None):
+        memory = self.encode(src, src_mask)
+        
+        output = self.decode(tgt, memory, src_mask=src_mask, tgt_mask=tgt_mask)
+        
+        logits = self.projection(output)
         return logits
     
-    def generate(self, src: torch.Tensor, src_mask: torch.Tensor = None,
-                 max_len: int = 100, bos_idx: int = 1, eos_idx: int = 2) -> torch.Tensor:
-        batch_size = src.size(0)
-        encoder_output = self.encode(src, src_mask)
-        
-        generated = torch.full((batch_size, 1), bos_idx, dtype=torch.long, device=src.device)
-        
-        for _ in range(max_len - 1):
-            tgt_mask = (generated != self.pad_idx).long()
-            decoder_output = self.decode(generated, encoder_output, src_mask, tgt_mask)
-            logits = self.output_projection(decoder_output[:, -1, :])
-            next_token = logits.argmax(dim=-1, keepdim=True)
-            generated = torch.cat([generated, next_token], dim=1)
-            
-            if (next_token == eos_idx).all():
-                break
-        
-        return generated
+    @torch.no_grad()
+    def translate(self, src: torch.Tensor, src_mask: torch.Tensor = None,
+                  max_len: int = 100, bos_idx: int = 1, eos_idx: int = 2) -> torch.Tensor:
+        return self.generate(src, src_mask, max_len, bos_idx, eos_idx)

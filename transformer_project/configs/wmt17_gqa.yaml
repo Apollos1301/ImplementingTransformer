@@ -1,0 +1,53 @@
+project_name: "transformer-wmt17"
+run_name: "wmt17-gqa-run"
+weights_dir: "./weights_gqa"
+batch_size: 64
+epochs: 5
+learning_rate: 1.0
+max_seq_length: 100
+vocab_size: 32000
+d_model: 512
+n_heads: 8
+num_encoder_layers: 6
+num_decoder_layers: 6
+dim_feedforward: 2048
+dropout: 0.1
+mixed_precision: true
+dataset_name: "wmt17"
+dataset_config: "de-en"
+val_split_size: 0.01
+resume_from: null
+start_epoch: 0
+warmup_steps: 4000
+use_scheduler: true
+use_wandb: true
+positional_encoding_type: "sinusoidal"
+
+# Grouped Query Attention (GQA) Configuration
+# Set use_gqa to true to enable GQA instead of standard MHA
+use_gqa: true
+# Number of key-value heads (must divide n_heads evenly)
+# With n_heads=8 and num_kv_heads=2, we get a 4:1 ratio (75% KV cache reduction)
+# Options: 8 (MHA), 4 (2:1), 2 (4:1), 1 (MQA)
+num_kv_heads: 2
+
+data:
+  dataset_version: "wmt17"
+  train_val_test_split: "train/validation/test"
+  
+tokenizer:
+  type: "BPE" 
+  implementation: "huggingface/tokenizers"
+  vocab_size: 32000
+  normalization: false 
+  special_tokens:
+    bos: "[BOS]" 
+    eos: "[EOS]"
+    pad: "[PAD]"
+    unk: "[UNK]"
+
+preprocessing:
+  max_seq_length: 100 
+  min_seq_length: 1
+  filter_long_sentences: false 
+  normalization: "none"

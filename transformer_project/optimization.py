@@ -13,7 +13,6 @@ class TransformerLRScheduler(LambdaLR):
                 step = 1
             
             _step = float(step)
-            
             return (self.d_model ** -0.5) * min(_step ** -0.5, _step * (self.warmup_steps ** -1.5))
 
         super().__init__(optimizer, lr_lambda, last_epoch=last_epoch)
