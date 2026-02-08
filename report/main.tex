@@ -25,7 +25,7 @@
 \def\confYear{2026}
 
 %%%%%%%%% TITLE
-\title{Implementing Transformers: From Attention Mechanisms to Grouped Query Attention}
+\title{Implementing Transformers}
 
 %%%%%%%%% AUTHORS
 \author{Abtin Pourhadi\\
@@ -36,75 +36,71 @@ Heinrich-Heine-Universität Düsseldorf\\
 \begin{document}
 \maketitle
 
-% SOURCE B STRUCTURE: No abstract block. Information integrated into Introduction.
-
 %%%%%%%%% BODY TEXT
 \section{Introduction}
 \label{sec:intro}
 
-The Transformer architecture, introduced by Vaswani et al.~\cite{vaswani2017attention}, revolutionised natural language processing by replacing recurrent mechanisms with self-attention mechanisms that enable flexible modeling of long-range dependencies.
+The Transformer architecture, introduced by Vaswani et al.~\cite{vaswani2017attention}, revolutionised natural language processing by replacing recurrent mechanisms with self-attention mechanisms that enable flexible modeling of long-range dependencies. Unlike Recurrent Neural Networks (RNNs), which process data sequentially, Transformers allow for massive parallelization during training, making them highly scalable for modern hardware.
 
-This report presents a comprehensive implementation of the Transformer architecture developed throughout the course. We detail the construction of key components including BPE tokenization, scaled dot-product attention, and the complete encoder-decoder architecture. We establish a strong baseline by training a vanilla Transformer on German-to-English translation.
+This report presents a comprehensive implementation of the Transformer architecture developed throughout the course. We detail the construction of key components including BPE tokenization, scaled dot-product attention, and the complete encoder-decoder architecture. We first establish a strong baseline by training a vanilla encoder-decoder Transformer and analyzing its training dynamics and translation quality on German-to-English translation.
 
-Building on this baseline, we extend the architecture by implementing Grouped Query Attention (GQA)~\cite{ainslie2023gqa} to optimize memory bandwidth and inference efficiency. Our experiments demonstrate that GQA ($G=2$) reduces KV cache memory by 75\% while maintaining translation quality comparable to the baseline.
+Building on this baseline, we will investigate the memory bandwidth bottleneck during inference. We extend the architecture by implementing Grouped Query Attention (GQA)~\cite{ainslie2023gqa} to optimize memory bandwidth and inference efficiency. Our experiments demonstrate that GQA ($G=2$) reduces KV cache memory by 75\% while maintaining translation quality comparable to the baseline.
 
 \noindent\textbf{Contributions.}
 \begin{itemize}
     \item Implementation of a baseline encoder-decoder Transformer with BPE tokenization, masked self-attention, and cross-attention.
-    \item Empirical evaluation of the baseline on the WMT17 German-English dataset, including analysis of training dynamics.
-    \item Implementation and analysis of Grouped Query Attention (GQA) as an architectural extension to improve inference efficiency.
+    \item Empirical evaluation of the baseline model on the WMT17 German-English translation task, including training dynamics and quantitative results.
+    \item Implementation and analysis of Grouped Query Attention (GQA) as an architectural extension, with an analysis of its effect on memory footprint, latency, and translation performance.
 \end{itemize}
-All code used for the implementation, training, and evaluation is available at \url{https://github.com/abtinpo/implementing-transformers}.
+All code used for the implementation, training, and evaluation of the models is publicly available at \url{https://git.hhu.de/jat82ruv/implementingtransformers}.
 
 %-------------------------------------------------------------------------
 \section{Transformer Architecture and Model Design}
 \label{sec:architecture}
 
-This section describes the architecture of the Transformer model implemented in this work.
-
 \subsection{Input Embeddings and Tokenization}
-Tokenization transforms raw text into discrete tokens. We implement Byte-Pair Encoding (BPE)~\cite{sennrich2016neural}, which iteratively merges frequent character pairs. Our vocabulary is constructed from the German-English parallel corpus. Special tokens are added for padding (\texttt{[PAD]}), unknown words (\texttt{[UNK]}), sequence start (\texttt{[BOS]}), and sequence end (\texttt{[EOS]}). The final vocabulary size is 32,000.
+The Transformer operates on discrete input tokens, which are first mapped to continuous vector representations using learned embedding layers. Tokenization transforms raw text into discrete tokens. We implement Byte-Pair Encoding (BPE)~\cite{sennrich2016neural}, which iteratively merges frequent character pairs. Our vocabulary is constructed from the German-English parallel corpus. Special tokens are added for padding (\texttt{[PAD]}), unknown words (\texttt{[UNK]}), sequence start (\texttt{[BOS]}), and sequence end (\texttt{[EOS]}). The final vocabulary size is 32,000.
 
 \subsection{Attention Mechanism}
-Self-attention enables the model to weigh the relevance of different positions. We implement Scaled Dot-Product Attention:
+Self-attention enables each token to attend to all other tokens within a sequence, allowing the model to capture long-range dependencies. We implement Scaled Dot-Product Attention:
 \begin{equation}
 \text{Attention}(Q, K, V) = \text{softmax}\left(\frac{QK^T}{\sqrt{d_k}}\right)V
 \end{equation}
-Multi-Head Attention (MHA) projects queries, keys, and values into multiple subspaces ($h=8$). In the decoder, we utilize masking to prevent positions from attending to subsequent positions (autoregressive property) and cross-attention to attend to encoder outputs.
+Multi-Head Attention (MHA) projects queries, keys, and values into multiple subspaces ($h=8$). In the encoder, self-attention is applied without restrictions. In the decoder, two masking mechanisms are required. We utilize masking to prevent positions from attending to subsequent positions (autoregressive property) and cross-attention to attend to encoder outputs. Cross-attention enables the decoder to condition its predictions on the encoded source sentence, which is essential for sequence-to-sequence tasks such as machine translation.
 
 \subsection{Sinusoidal Positional Encoding}
-To inject order information, we implement sinusoidal positional encoding:
+The Transformer embeddings capture semantic properties of tokens but do not encode any notion of order. Since the self-attention mechanism is permutation invariant, positional information must be injected explicitly. To inject order information, we implement sinusoidal positional encoding:
 \begin{equation}
 PE_{(pos, 2i)} = \sin\left(\frac{pos}{10000^{2i/d_{model}}}\right)
 \end{equation}
-This allows the model to learn relative positions via linear transformations.
+This formulation has two important properties. First, positional encodings for a fixed offset $k$ can be expressed as a linear function of the encodings at position $t$, allowing the model to reason about relative positions. Second, the wavelengths of the sinusoidal functions form a geometric progression ranging from $2\pi$ to $10000 \cdot 2\pi$, enabling the encoding of both short- and long-range positional relationships.
 
 \subsection{Position-wise Feed-Forward Network}
-Each layer contains a feed-forward network defined as:
+Each Transformer layer contains a position-wise feed-forward network applied independently to each token representation. It is defined as:
 \begin{equation}
 \text{FFN}(x) = \max(0, xW_1 + b_1)W_2 + b_2
 \end{equation}
-We use an inner dimension of $d_{ff} = 2048$.
+While attention mechanisms allow tokens to exchange information, the feed-forward network performs non-linear feature transformations at each position. We use an inner dimension of $d_{ff} = 2048$.
 
 \subsection{Layer Normalization and Residuals}
 To stabilize training and improve gradient flow, residual connections surround each sub-layer, followed by layer normalisation. Given an input vector $x$, layer normalization is defined as:
 \begin{equation}
 \text{LayerNorm}(x) = \frac{x - \mu}{\sqrt{\sigma^2 + \epsilon}} \cdot \gamma + \beta
 \end{equation}
-where $\mu$ and $\sigma^2$ denote the mean and variance computed across feature dimensions. The final output of a sub-layer is $\text{LayerNorm}(x + \text{Sublayer}(x))$.
+where $\mu$ and $\sigma^2$ denote the mean and variance computed across feature dimensions. Layer normalization reduces internal covariate shift and allows the training of deep Transformer stacks. The final output of a sub-layer is $\text{LayerNorm}(x + \text{Sublayer}(x))$.
 
 \subsection{Concrete Model Configuration}
-The model consists of $N=6$ encoder and decoder layers with $d_{model} = 512$.
+The model consists of $N=6$ encoder and decoder layers with $d_{model} = 512$. All attention mechanisms use eight parallel attention heads.
 
 \subsection{Parameter Sharing}
-Following the original Transformer, we share parameters across three embedding matrices: the encoder input embedding, the decoder input embedding, and the pre-softmax linear transformation. This reduces the model size significantly---instead of three separate matrices of size $V \times d_{model}$, only one is needed. For $V=32000$ and $d_{model}=512$, this saves approximately 33M parameters. Beyond memory savings, parameter sharing enforces semantic consistency: words maintain the same representation whether they appear in the source or target sequence, improving generalization and providing stronger learning signals for rare words.
+Following the original Transformer, we share parameters across three embedding matrices: the encoder input embedding, the decoder input embedding, and the pre-softmax linear transformation. This reduces the model size significantly—instead of three separate matrices of size $V \times d_{model}$, only one is needed. For $V=32000$ and $d_{model}=512$, this saves approximately 33M parameters. Beyond memory savings, parameter sharing enforces semantic consistency: words maintain the same representation whether they appear in the source or target sequence, improving generalization and providing stronger learning signals for rare words.
 
 %-------------------------------------------------------------------------
 \section{Training Setup and Optimization}
 \label{sec:training}
 
 \subsection{Dataset and Configuration}
-We train on the WMT17 German-English dataset. The data is preprocessed with BPE tokenization. We use 5,906,184 training pairs. The model is trained for 5 epochs with a batch size of 64 on a single NVIDIA H100 GPU (96GB VRAM).
+We train on the full WMT17 German-English dataset. The data is preprocessed with BPE tokenization and truncated to a maximum sequence length of 100 tokens to enable efficient batching. We use 5,906,184 training pairs. A fixed validation split of 1\% of the training data is used to monitor convergence. The model is trained for 5 epochs with a batch size of 64 on a single NVIDIA H100 GPU (96GB VRAM).
 
 \subsection{Optimization}
 We use the AdamW optimizer, which decouples weight decay from gradient updates. The optimizer computes biased first- and second-moment estimates:
@@ -114,13 +110,13 @@ m_t = \beta_1 m_{t-1} + (1 - \beta_1) g_t
 \begin{equation}
 v_t = \beta_2 v_{t-1} + (1 - \beta_2) g_t^2
 \end{equation}
-Since $m_0 = v_0 = 0$, early estimates are biased toward zero. Bias-corrected estimates are computed as $\hat{m}_t = m_t / (1 - \beta_1^t)$ and $\hat{v}_t = v_t / (1 - \beta_2^t)$. AdamW applies weight decay directly to parameters rather than adding it to the gradient, ensuring consistent regularization regardless of gradient magnitude. We use $\beta_1 = 0.9$, $\beta_2 = 0.98$, $\epsilon = 10^{-9}$, and weight decay of $0.1$ (excluding bias and layer normalization parameters).
+Since $m_0 = v_0 = 0$, early estimates are biased toward zero. Bias-corrected estimates are computed as $\hat{m}_t = m_t / (1 - \beta_1^t)$ and $\hat{v}_t = v_t / (1 - \beta_2^t)$. AdamW applies weight decay directly to parameters rather than adding it to the gradient. This decoupling leads to more predictable regularization behavior and improved generalization compared to traditional $L_2$ regularization.
 
-We apply a custom learning rate schedule with linear warmup ($warmup = 4000$) and inverse square root decay:
+We use $\beta_1 = 0.9$, $\beta_2 = 0.98$, $\epsilon = 10^{-9}$, and weight decay of $0.1$. We apply a custom learning rate schedule with linear warmup ($warmup = 4000$) and inverse square root decay:
 \begin{equation}
 lr(t) = d_{model}^{-0.5} \cdot \min(t^{-0.5}, t \cdot warmup^{-1.5})
 \end{equation}
-This allows the optimizer to adapt to gradient scales early in training.
+The warmup phase allows the optimizer to gradually adapt to the scale of the gradients during the early stages of training, while the subsequent decay stabilizes convergence.
 
 \subsection{Regularisation and Stability}
 We apply dropout ($P_{drop} = 0.1$) to prevent overfitting. We employ mixed-precision training using BFloat16 to accelerate computation while maintaining numerical stability. Additionally, we apply gradient clipping with a maximum norm of 1.0 to prevent exploding gradients and ensure stable training dynamics.
@@ -129,13 +125,17 @@ We apply dropout ($P_{drop} = 0.1$) to prevent overfitting. We employ mixed-prec
 \section{Grouped Query Attention (Extension)}
 \label{sec:gqa}
 
-Standard MHA creates a memory bottleneck during inference due to the size of the KV cache. To address this, we extend our implementation with Grouped Query Attention (GQA) \cite{ainslie2023gqa}. GQA interpolates between MHA and Multi-Query Attention (MQA). Query heads are divided into $G$ groups, sharing a single key-value head per group.
+Standard MHA creates a memory bottleneck during inference due to the size of the KV cache. In auto-regressive decoding, the Key (K) and Value (V) matrices for all previous tokens must be stored in memory to generate the next token. As sequence length increases, loading these large matrices from memory becomes the primary latency bottleneck, rather than the computation itself.
+
+To address this, we extend our implementation with Grouped Query Attention (GQA) \cite{ainslie2023gqa}. GQA interpolates between Multi-Head Attention (MHA) and Multi-Query Attention (MQA). Instead of having a unique KV head for every Query head ($h_{kv} = h_{q}$), GQA divides query heads into $G$ groups, sharing a single key-value head per group. This effectively reduces the size of the KV cache by a factor of $G$.
+
 \begin{itemize}
     \item \textbf{MHA:} $G=h$ (Highest quality, largest memory).
     \item \textbf{GQA:} $1 < G < h$ (Balanced).
     \item \textbf{MQA:} $G=1$ (Lowest memory, potential quality loss).
 \end{itemize}
-For our experiments, we focus on $G=2$, representing a 4$\times$ reduction in KV cache compared to the baseline ($h=8$).
+
+For our experiments, we focus on $G=2$, representing a 4$\times$ reduction in KV cache compared to the baseline ($h=8$). This reduction aims to alleviate the memory bandwidth pressure while retaining enough capacity in the attention mechanism to model complex dependencies.
 
 %-------------------------------------------------------------------------
 \section{Experiments and Results}
@@ -145,7 +145,7 @@ For our experiments, we focus on $G=2$, representing a 4$\times$ reduction in KV
 All experiments are conducted on the WMT17 German-English dataset. Both the baseline and GQA models use the same architecture, optimizer, and learning rate schedule to ensure comparability.
 
 \subsection{Baseline Results}
-We evaluate translation quality using BLEU scores. The baseline MHA model achieves a score of 26.99. Figures~\ref{fig:train_loss} and~\ref{fig:val_loss} illustrate the training dynamics for both models.
+We evaluate translation quality using BLEU scores. The baseline MHA model achieves a score of 26.99. Figures~\ref{fig:train_loss} and~\ref{fig:val_loss} illustrate the training dynamics. The validation loss decreases smoothly before reaching a plateau, indicating stable optimization similar to standard Transformer benchmarks.
 
 \begin{figure*}[t]
 \centering
@@ -177,6 +177,20 @@ We evaluate translation quality using BLEU scores. The baseline MHA model achiev
 \label{fig:val_loss}
 \end{figure*}
 
+\begin{table}[h]
+\centering
+\begin{tabular}{lccc}
+\toprule
+\textbf{Model} & \textbf{Train Loss} & \textbf{Val Loss} & \textbf{Val Perplexity} \\
+\midrule
+MHA (Base) & 1.74 & 1.56 & 4.74 \\
+GQA ($G=2$) & 2.14 & 1.59 & 4.91 \\
+\bottomrule
+\end{tabular}
+\caption{Final training and validation losses with validation perplexity at approximately 420k steps.}
+\label{tab:losses}
+\end{table}
+
 \begin{figure*}[t]
 \centering
 \begin{subfigure}[b]{0.48\textwidth}
@@ -193,7 +207,7 @@ We evaluate translation quality using BLEU scores. The baseline MHA model achiev
 \end{figure*}
 
 \subsection{GQA Extension Results}
-Table~\ref{tab:bleu} compares the baseline against the GQA variant. GQA ($G=2$) achieves a competitive BLEU score of 27.05, slightly outperforming the baseline while using only 25\% of the KV cache memory.
+Table~\ref{tab:bleu} compares the baseline against the GQA variant. GQA ($G=2$) achieves a competitive BLEU score of 27.05, slightly outperforming the baseline while using only 25\% of the KV cache memory. This result challenges the assumption that reducing attention heads necessarily degrades performance.
 
 \begin{table}[h]
 \centering
@@ -210,37 +224,57 @@ GQA ($G=2$) & 27.05 & 0.25$\times$ & 53.4M \\
 \end{table}
 
 \subsection{Convergence Analysis}
-We observed that GQA models converge with similar dynamics to the baseline. The validation loss curves (Figure~\ref{fig:val_loss}) show that both models reach comparable final losses, indicating that the reduced KV head count does not significantly impact model capacity for this task.
+We observed that GQA models converge with similar dynamics to the baseline. The validation loss curves (Figure~\ref{fig:val_loss}) show that both models reach comparable final losses, indicating that the reduced KV head count does not significantly impact model capacity for this task. This suggests that standard Multi-Head Attention may exhibit redundancy, and that a compressed Key-Value representation is sufficient for capturing the necessary semantic and syntactic dependencies in translation.
 
 %-------------------------------------------------------------------------
 \section{Qualitative Analysis of Translations}
 \label{sec:qualitative}
 
-Table~\ref{tab:examples} presents representative translation examples. We analyze fluency, semantic adequacy, and recurring error patterns.
+To complement the quantitative evaluation, we qualitatively analyze translations generated by the baseline Transformer and the GQA-based model. We focus on fluency, semantic adequacy, and recurring error patterns that are not fully captured by BLEU scores. Representative examples are shown in Table~\ref{tab:examples}.
 
-Interestingly, GQA ($G=2$) often produces more fluent and accurate translations than the MHA baseline, despite using fewer parameters and reduced KV cache.
+\textbf{General Performance.} Both models produce fluent and grammatically correct translations for short and syntactically simple sentences. However, GQA ($G=2$) often produces more fluent and accurate translations than the MHA baseline, despite using fewer parameters and reduced KV cache.
 
-\textbf{Semantic Accuracy.} Both models occasionally struggle with domain-specific terms. For example, the German word ``Leichnam'' (corpse/body) is sometimes left untranslated. However, GQA demonstrates better handling of compound nouns and professional terminology (e.g., correctly translating ``Koch'' as ``chef'' rather than ``cook'').
+\textbf{Semantic Accuracy.} Both models occasionally struggle with domain-specific terms. For example, the German word ``Leichnam'' (corpse/body) is sometimes left untranslated. However, GQA demonstrates better handling of compound nouns and professional terminology. In one instance, GQA correctly translates ``Koch'' as ``chef'' in the context of a professional working in a San Francisco Mall, whereas the MHA baseline translates it simply as ``cook'' and produces the fractured phrase ``28 years of cook'' instead of ``28-year-old chef''. This suggests GQA maintains better semantic coherence.
 
-\textbf{Syntactic Fluency.} GQA shows improved fluency in relative clause constructions. In the complex sentence example, GQA correctly produces ``who recently moved'' while MHA generates the awkward ``recently drawn to.''
+\textbf{Syntactic Fluency.} GQA also shows improved fluency in relative clause constructions. In the complex sentence example shown in Table~\ref{tab:examples}, GQA correctly produces ``who recently moved,'' effectively capturing the relative clause structure. In contrast, the MHA model generates the awkward and semantically confusing ``recently drawn to,'' failing to correctly resolve the verb ``gezogen'' (moved vs. drawn).
 
 \textbf{Long vs. Short Sentences.} Both models perform excellently on short sentences, often achieving perfect translations. On longer sentences, we observe occasional repetition artifacts in failure cases (e.g., ``to be a city to be a city...''), which may indicate attention degradation on very long sequences.
 
-\begin{table}[h]
+\begin{table*}[t]
 \centering
 \small
-\begin{tabular}{p{2.2cm}p{2.4cm}p{2.4cm}}
+\begin{tabular}{p{4.5cm}p{5.5cm}p{5.5cm}}
 \toprule
-\textbf{Source (DE)} & \textbf{MHA Output} & \textbf{GQA Output} \\
+\textbf{Source (German)} & \textbf{MHA Output} & \textbf{GQA Output} \\
+\midrule
+\multicolumn{3}{l}{\textit{Short sentences (both models perform well):}} \\
+\midrule
+Es war eine Geste, die eine Krise beendete. & It was a gesture that ended a crisis. & It was a gesture that ended a crisis. \\
+\midrule
+Vergessen Sie den Druck. & Forget the pressure. & Forget the pressure. \\
+\midrule
+Das ist kein Zufall. & That is no coincidence. & That is no accident. \\
+\midrule
+\multicolumn{3}{l}{\textit{Medium complexity (GQA shows better semantic handling):}} \\
 \midrule
 28-jähriger Koch in San Francisco Mall tot aufgefunden & 28 years of cook in San Francisco Mall dead & 28-year-old chef found dead in San Francisco Mall \\
 \midrule
+Es ist so eine Ehre für uns mit ihr zu arbeiten. & It is such an honour for us to work with it. & It is an honour for us to work with her. \\
+\midrule
+Die Lenkung dürfte aber etwas direkter sein. & But the control should be a little more direct. & But the steering should be a little more direct. \\
+\midrule
+\multicolumn{3}{l}{\textit{Complex sentences (relative clauses and long-range dependencies):}} \\
+\midrule
 Ein 28-jähriger Koch, der vor kurzem nach San Francisco gezogen ist... & A 28 year-old kitchen recently drawn to San Francisco... & A 28-year-old chef, who recently moved to San Francisco... \\
+\midrule
+\multicolumn{3}{l}{\textit{Failure cases (repetition artifacts on very long sequences):}} \\
+\midrule
+Einheimische betrauerten es als letzten Verlust in einer sich gentrifizierenden Stadt. & In the early days... the city was the first to be a city to be a city to be a city... & Locals mourned it as the last loss in a gentrifying city. \\
 \bottomrule
 \end{tabular}
-\caption{Qualitative comparison of translations. GQA produces more fluent output.}
+\caption{Qualitative comparison of translations across different sentence types. GQA consistently produces more fluent output and better handles semantic ambiguity, compound nouns (``Koch'' $\rightarrow$ ``chef'' vs ``cook''), and relative clause structures. Reference: ``Locals bemoaned it as the latest loss in a gentrifying city.''}
 \label{tab:examples}
-\end{table}
+\end{table*}
 
 %-------------------------------------------------------------------------
 \section{Lessons Learned and Challenges}
@@ -250,7 +284,7 @@ Ein 28-jähriger Koch, der vor kurzem nach San Francisco gezogen ist... & A 28 y
 
 \textbf{Numerical Stability in Masked Attention.} When implementing masked self-attention, using \texttt{float('-inf')} for masked positions led to NaN values during the softmax computation, particularly when entire rows were masked. Replacing \texttt{-inf} with a large negative constant ($-10^9$) resolved this issue while maintaining the desired masking behavior.
 
-\textbf{GQA Broadcasting.} Implementing GQA required careful handling of tensor broadcasting when expanding the reduced KV heads to match query heads. Ensuring correct dimension alignment between $Q \in \mathbb{R}^{B \times h \times L \times d_k}$ and $K, V \in \mathbb{R}^{B \times g \times L \times d_k}$ was essential for correct attention computation.
+\textbf{GQA Broadcasting.} Implementing GQA required careful handling of tensor broadcasting when expanding the reduced KV heads to match query heads. Ensuring correct dimension alignment between $Q \in \mathbb{R}^{B \times h \times L \times d_k}$ and $K, V \in \mathbb{R}^{B \times g \times L \times d_k}$ was essential for correct attention computation. This practical implementation detail underscores the complexity of modifying attention mechanisms beyond standard libraries.
 
 %-------------------------------------------------------------------------
 \section{Discussion and Insights}
@@ -258,7 +292,7 @@ Ein 28-jähriger Koch, der vor kurzem nach San Francisco gezogen ist... & A 28 y
 
 The primary trade-off investigated in this work is between memory efficiency and translation quality.
 
-\textbf{Memory Efficiency.} As shown in Table~\ref{tab:memory}, GQA significantly reduces the memory footprint.
+\textbf{Memory Efficiency.} As shown in Table~\ref{tab:memory}, GQA significantly reduces the memory footprint. The 75\% reduction in KV cache size allows for significantly larger batch sizes during inference or the deployment of models on hardware with limited VRAM.
 
 \begin{table}[h]
 \centering
@@ -275,6 +309,8 @@ GQA ($G=2$) & 2 & 0.25$\times$ \\
 \end{table}
 
 \textbf{Inference Speed.} We analyzed decoding latency across different batch sizes (Table~\ref{tab:latency}). Reduced memory bandwidth usage in GQA translates to faster token generation, particularly at higher batch sizes where memory bandwidth is the bottleneck.
+
+\textbf{Unexpected Performance Parity.} Theoretical expectations suggest that reducing the number of KV heads from 8 (MHA) to 2 (GQA) should reduce model capacity and potentially degrade translation quality. However, our results show a slight improvement (+0.06 BLEU). We attribute this to \textbf{attention head redundancy}. Recent research suggests that many attention heads in standard Transformers learn redundant or highly correlated features. By forcing the model to share Key and Value representations across multiple Query heads, GQA may act as a form of architectural regularization, pruning this redundancy and preventing the model from overfitting to noise in the attention maps. This indicates that for the WMT17 dataset and this specific model size ($d_{model}=512$), the full capacity of 8 independent KV heads was likely underutilized.
 
 \begin{table}[h]
 \centering
@@ -296,6 +332,9 @@ GQA ($G=2$) & 7.73 & 13.61 & 47.57 \\
 \label{sec:conclusion}
 
 We successfully implemented a Transformer for German-to-English translation and investigated Grouped Query Attention. Our results show that GQA ($G=2$) not only matches but slightly exceeds baseline quality (27.05 vs 26.99 BLEU) while reducing KV cache memory by 75\% and model parameters by 12\%. This highlights GQA as an effective strategy for deploying Transformers in resource-constrained environments without sacrificing translation quality.
+
+\section*{Word Count}
+This report contains approximately  2373 words (counted with https://www.montereylanguages.com/pdf-word-count-online-free-tool.html).
 
 %%%%%%%%% REFERENCES
 {
